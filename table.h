@@ -5,6 +5,10 @@
 #include <cstddef>
 #include <vector>
 #include <cstdint>
+#include <bit>
+#include <limits>
+#include <algorithm>
+#include <new>
 
 #ifndef CPPTGC_TABLE_H
 #define CPPTGC_TABLE_H
@@ -23,12 +27,42 @@ class Table {
 public:
     Table() = default;
 
-    void *add(void *ptr, std::size_t size) noexcept;
+    void add(void *ptr, std::size_t size);
 
     template<typename Self>
-    [[nodiscard]] auto find(this Self&& self, const void* ptr) noexcept;
+    [[nodiscard]] auto find(this Self& self, const void* ptr) noexcept -> decltype(&self.items_[0]) {
+        if (self.items_.empty()) return nullptr;
+
+        const std::size_t h = hash(ptr);
+        std::size_t i = self.ideal_slot(h);
+
+        std::size_t dist = 0;
+        while (true) {
+            auto &cur = self.items_[i];
+
+            if (cur.empty() || self.probe(i, cur.hash) < dist) {
+                return nullptr;
+            }
+
+            if (cur.hash == h && cur.ptr == ptr) {
+                return &cur;
+            }
+
+
+            i = (i + 1) & self.mask();
+            dist += 1;
+        }
+    }
 
     void remove(const void* ptr) noexcept;
+
+    /* For test so public this make test easy */
+    [[nodiscard]] std::size_t    size()    const noexcept { return nitems_; }
+    [[nodiscard]] std::size_t    nslots()  const noexcept { return items_.size(); }
+    [[nodiscard]] bool           empty()   const noexcept { return nitems_ == 0; }
+    [[nodiscard]] std::uintptr_t min_ptr() const noexcept { return min_ptr_; }
+    [[nodiscard]] std::uintptr_t max_ptr() const noexcept { return max_ptr_; }
+    [[nodiscard]] const std::vector<Entry>& slots() const noexcept { return items_; }
 
 protected:
     [[nodiscard]] static std::size_t hash(const void* ptr) noexcept {
@@ -52,12 +86,8 @@ protected:
         return std::bit_ceil(target);
     }
 
-    [[nodiscard]] std::size_t nslots() const noexcept {
-        return items_.size();
-    }
-
     [[nodiscard]] std::size_t mask() const noexcept {
-        return this->items_.size() - 1;
+        return items_.size() - 1;
     }
 
 private:
@@ -65,14 +95,19 @@ private:
         rehash(ideal_size(nitems_ + 1));
     };
 
-    void shrink() {
-        if (const std::size_t target = ideal_slot(nitems_); target < nslots()) {
-            rehash(target);
+    void shrink() noexcept {
+        const bool too_empty =
+        static_cast<double>(nitems_) < static_cast<double>(nslots()) * load_factor_ / 4;
+
+        if (nslots() > 8 && too_empty) {
+            try {
+                rehash(nslots() / 2);
+            }catch (const std::bad_alloc&) {}
         }
     };
 
     void rehash(std::size_t new_nslots);
-    void insert_no_grow(Entry &e) noexcept;
+    void insert_no_grow(Entry e) noexcept;
 
     std::vector<Entry> items_;
     std::size_t nitems_ = 0;
