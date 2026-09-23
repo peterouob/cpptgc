@@ -84,6 +84,8 @@ void Collector::clear_mark() noexcept {
 
 std::expected<void*, std::errc> Collector::alloc(std::size_t size,
                                                  Flags flags) {
+  if (!is_pause() && size > threshold_) collect();
+
   if (size == 0) size = 1;
 
   void* p = std::malloc(size);
@@ -113,4 +115,34 @@ void Collector::mark_stack() {
 
   l &= ~(sizeof(std::uintptr_t) - 1);
   scan(std::span(reinterpret_cast<const std::byte*>(l), h - l));
+}
+
+void Collector::collect() {
+  mark();
+  sweep();
+
+  threshold_ = cur_size()
+            + static_cast<std::size_t>(static_cast<double>(cur_size()) * sweep_factor_)
+            + 1;
+
+  collections_ += 1;
+}
+
+void Collector::sweep() {
+  free_.clear();
+
+  for (Entry& e : table_.slots()) {
+    if (!e.empty() && !has(e.flags, Flags::Mark) && !has(e.flags, Flags::Root))
+      free_.push_back(e);
+  }
+
+  for (const Entry& e : free_) {
+    table_.remove(e.ptr);
+  }
+
+  for (const Entry& e : free_) {
+    if (e.dtor != nullptr) e.dtor(e.ptr);
+    std::free(e.ptr);
+  }
+
 }

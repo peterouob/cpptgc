@@ -93,6 +93,12 @@ class Collector {
   Table table_;
   const void* stack_bottom_;
   std::vector<std::span<const std::byte>> worklist_;
+
+  std::vector<Entry> free_;
+  std::size_t threshold_ = 64;
+  double sweep_factor_ = 0.5;
+  std::size_t collections_ = 0;
+  bool paused_ = false;
 };
 
 class [[nodiscard]] PauseGuard {
